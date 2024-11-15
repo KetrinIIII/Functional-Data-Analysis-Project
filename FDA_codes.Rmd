@@ -1,0 +1,448 @@
+---
+title: "Functional Data Analysis of Spectrometric Data"
+author: "Ketrin Hristova"
+date: "2024-08-01"
+output:
+  pdf_document: default
+  html_document: default
+---
+
+# Introduction
+
+This project explores the application of Functional Data Analysis (FDA) on spectrometric data from meat samples. The goal is to analyze absorbance spectra and understand how these spectral features relate to the chemical composition of meat, specifically focusing on fat, water, and protein content.
+
+The dataset used is the Tecator dataset, which includes 215 samples with spectrometric data and corresponding chemical compositions (fat, water, and protein content). The data consists of absorbance measurements across various wavelengths.
+
+## Loading the Data and Checking the Structure
+
+```{r}
+library(fda.usc)
+```
+
+```{r}
+data(tecator)
+```
+
+```{r}
+str(tecator)
+```
+
+## Exploratory Data Analysis (EDA)
+
+```{r}
+library(ggplot2)
+
+sample_indices <- sample(1:215, 10) 
+
+matplot(tecator$absorp.fdata$argvals, t(tecator$absorp.fdata$data[sample_indices, ]), type = 'l',
+xlab = "Wavelength (nm)",
+ylab = "Absorbance",
+main = "Random Spectrometric Curves",
+col = 1:10,
+lty = 1)
+legend("topright", legend = paste("Sample", sample_indices), col = 1:10, lty
+= 1, cex = 0.8)
+
+
+```
+
+# Plot histograms of the chemical components
+```{r}
+par(mfrow = c(1, 3)) 
+# Fat content distribution
+hist(tecator$y$Fat,
+main = "Fat Content Distribution", xlab = "Fat (%)",
+col = "lightblue",
+border = "white")
+# Water content distribution
+hist(tecator$y$Water,
+main = "Water Content Distribution", xlab = "Water (%)",
+col = "lightgreen",
+border = "white")
+# Protein content distribution
+hist(tecator$y$Protein,
+main = "Protein Content Distribution", xlab = "Protein (%)",
+col = "lightcoral",
+border = "white")
+```
+
+## 1. Smoothing Functional Data
+
+
+```{r}
+library(fda)
+library(fda.usc)
+  dim(tecator$absorp.fdata$data)
+```
+
+
+```{r}
+# Extract data for selected samples
+original_data_samples <- tecator$absorp.fdata$data[sample_indices, ] 
+
+# Original Curves for selected samples
+matplot(tecator$absorp.fdata$argvals,
+        t(original_data_samples),
+        type = 'l',
+        col = 1:length(sample_indices),
+        lty = 1,
+        lwd = 2,
+        xlab = "Wavelength (nm)",
+        ylab = "Absorbance",
+        main = "Original Spectrometric Curves")
+
+legend("topright", legend = paste("Sample", sample_indices), col =
+1:length(sample_indices), lty = 1, lwd = 2)
+  
+```
+
+# Apply B-spline Smoothing and Fourier Smoothing
+```{r}
+library(mgcv)
+library(nlme)
+set.seed(123) 
+library(fda) 
+
+tecator_transposed <- t(tecator$absorp.fdata$data)
+# B-spline basis
+n_basis <- 20
+b_spline_basis <- create.bspline.basis(rangeval = tecator$absorp.fdata$rangeval, nbasis = n_basis)
+
+# Smooth the data using B-splines
+bspline_fd <- smooth.basis(tecator$absorp.fdata$argvals, tecator_transposed, b_spline_basis)$fd
+
+# Fourier basis
+fourier_basis <- create.fourier.basis(rangeval = tecator$absorp.fdata$rangeval, nbasis = 20)
+
+# Smooth the data using Fourier series
+fourier_fd <- smooth.basis(tecator$absorp.fdata$argvals, tecator_transposed, fourier_basis)$fd
+
+par(mfrow = c(1, 1), mar = c(5, 5, 4, 2) + 0.1, cex.main = 1.5, cex.lab = 1.4, cex.axis = 1.2)
+
+# B-spline smoothed curves for selected samples
+matplot(tecator$absorp.fdata$argvals, 
+        eval.fd(tecator$absorp.fdata$argvals, bspline_fd[sample_indices,]), 
+        type = 'l',
+        col = 1:length(sample_indices),
+        lty = 1,
+        lwd = 2,
+        xlab = "Wavelength (nm)",
+        ylab = "Absorbance",
+        main = "B-spline Smoothed Curves")
+legend("topright", legend = paste("Sample", sample_indices), col =
+1:length(sample_indices), lty = 1, lwd = 2)
+```
+
+```{r}
+# Fourier smoothed curves for selected samples
+matplot(tecator$absorp.fdata$argvals, 
+        eval.fd(tecator$absorp.fdata$argvals, fourier_fd[sample_indices,]), 
+        type = 'l',
+        col = 1:length(sample_indices),
+        lty = 1,
+        lwd = 2,
+        xlab = "Wavelength (nm)",
+        ylab = "Absorbance",
+        main = "Fourier Smoothed Curves")
+legend("topright", legend = paste("Sample", sample_indices), col =
+1:length(sample_indices), lty = 1, lwd = 2)
+```
+
+
+```{r}
+nbasis <- 30  
+
+# Recreate the B-spline basis
+ybasis <- create.bspline.basis(rangeval = tecator$absorp.fdata$rangeval, nbasis = nbasis)
+
+# Optimize lambda using GCV with a lower-order derivative (2nd order)
+loglam = seq(-6, 0, by = 0.25)
+gcvsave = numeric(length(loglam))
+
+for (i in 1:length(loglam)) {
+  lambdai = 10^loglam[i]
+  yfdPari = fdPar(ybasis, Lfdobj = int2Lfd(2), lambda = lambdai)  
+  s = smooth.basis(tecator$absorp.fdata$argvals, tecator_transposed, yfdPari)
+  
+  gcvsave[i] = mean(s$gcv)
+}
+
+plot(loglam, gcvsave, type = 'l', xlab = 'log(lambda)', ylab = 'GCV', main = "GCV for B-spline Smoothing")
+
+# Identify the optimal lambda
+optimal_lambda_bspline = 10^loglam[which.min(gcvsave)]
+cat("Optimal lambda for B-spline smoothing:", optimal_lambda_bspline, "\n")
+
+# Refit with optimal lambda for B-spline
+yfdPar_optimal_bspline = fdPar(ybasis, Lfdobj = int2Lfd(2), lambda = optimal_lambda_bspline)
+smoothed_curves_optimal_bspline = smooth.basis(tecator$absorp.fdata$argvals, tecator_transposed, yfdPar_optimal_bspline)
+smoothed_fd_optimal_bspline = smoothed_curves_optimal_bspline$fd
+
+# Plot the optimally smoothed B-spline curves for selected samples
+sample_indices <- c(1, 10, 50, 100, 150)  
+smoothed_data_samples_optimal_bspline = eval.fd(tecator$absorp.fdata$argvals, smoothed_fd_optimal_bspline)[, sample_indices]
+
+matplot(tecator$absorp.fdata$argvals, smoothed_data_samples_optimal_bspline, type = 'l', col = 1:length(sample_indices), lty = 1, lwd = 2, 
+        xlab = "Wavelength (nm)", ylab = "Absorbance", main = "Optimally Smoothed B-spline Curves")
+legend("topright", legend = paste("Sample", sample_indices), col = 1:length(sample_indices), lty = 1, lwd = 2)
+
+```
+
+```{r}
+
+nbasis <- 30
+
+# Recreate the B-spline basis
+ybasis <- create.bspline.basis(rangeval = range(tecator$absorp.fdata$argvals), nbasis = nbasis)
+
+# Use the optimal lambda value
+optimal_lambda_bspline <- 0.3162278
+
+# Create the functional parameter object using a lower order derivative
+Lfdobj <- int2Lfd(2)  # Using the 2nd derivative instead of 4th
+yfdPar_optimal_bspline <- fdPar(ybasis, Lfdobj = Lfdobj, lambda = optimal_lambda_bspline)
+
+# Refit the data with the optimal lambda
+smoothed_curves_optimal_bspline <- smooth.basis(tecator$absorp.fdata$argvals, tecator_transposed, yfdPar_optimal_bspline)
+bspline_fd <- smoothed_curves_optimal_bspline$fd
+```
+
+
+```{r}
+# Reset plot area
+par(mfrow = c(1, 1))
+```
+
+## 3.Functional PCA
+
+# Functional PCA on B-spline Smoothed Data
+```{r}
+library(fda)
+
+pca_bspline <- pca.fd(bspline_fd, nharm = 5) 
+
+# principal component scores and basis functions
+pc_scores_bspline <- pca_bspline$scores
+pc_basis_bspline <- pca_bspline$harmonics
+```
+
+
+# Principal Components
+```{r}
+par(mfrow = c(1,1), mar = c(5, 5, 4, 2) + 0.1, cex.main = 1.5, cex.lab = 1.4, cex.axis = 1.2)
+
+# Principal Components for B-spline Smoothed Data
+plot(pca_bspline$varprop[1:5], type = 'b', xlab = "Component", ylab = "Variance Explained",
+     main = "Variance Explained by PCA (B-spline)", pch = 19)
+```
+
+```{r}
+# Principal Component Functions for B-spline Smoothed Data
+matplot(tecator$absorp.fdata$argvals, eval.fd(tecator$absorp.fdata$argvals, pc_basis_bspline),
+        type = 'l', col = 1:5, lty = 1, lwd = 2,
+        xlab = "Wavelength (nm)", ylab = "Principal Components", 
+        main = "Principal Components (B-spline)")
+legend("topright", legend = paste("PC", 1:5), col = 1:5, lty = 1, lwd = 2)
+```
+
+
+
+```{r}
+# Reset plot area
+par(mfrow = c(1, 1))
+```
+
+# Principal Component Scores
+
+```{r}
+# Principal Component Scores for B-spline Smoothed Data
+print("Principal Component Scores for B-spline Smoothed Data:") 
+
+print(head(pca_bspline$scores))
+```
+
+```{r}
+fat_content <- tecator$y$Fat
+
+# Compute the correlations between Fat content and the principal components
+correlations <- cor(fat_content, pc_scores_bspline)
+
+# Print the correlations
+print("Correlations between Fat content and Principal Components:")
+print(correlations)
+```
+
+```{r}
+barplot(correlations, 
+        names.arg = paste("PC", 1:length(correlations), sep=""), 
+        col = "skyblue", 
+        border = "black", 
+        ylim = c(min(correlations) - 0.1, max(correlations) + 0.1),
+        main = "Correlations between Fat Content and Principal Components",
+        xlab = "Principal Components", 
+        ylab = "Correlation with Fat Content")
+
+# Add a horizontal line at y = 0 for reference
+abline(h = 0, col = "black", lwd = 1)
+```
+
+
+
+# Variance Explained
+```{r}
+# Variance Explained for B-spline Smoothed Data
+print("Variance Explained by Principal Components (B-spline):")
+
+print(pca_bspline$varprop)
+```
+
+
+
+
+## 5. Depth Measures
+```{r}
+plot(bspline_fd)
+```
+
+```{r}
+# boxplot using the Modified Band Depth (MBD) method
+b1 <- boxplot(bspline_fd, method = "MBD")
+```
+
+```{r}
+# boxplot using the BD2 method
+b2 <- boxplot(bspline_fd, method = "BD2")
+```
+
+```{r}
+# boxplot using the Both method (BD2 first, then MBD)
+b3 <- boxplot(bspline_fd, method = "Both")
+```
+
+
+```{r}
+print(b1$medcurve) 
+
+print(b2$medcurve)
+
+print(b3$medcurve) 
+
+# output of the MBD method to extract the band depths
+DM <- b1$depth 
+summary(DM)
+```
+
+```{r}
+# Histogram of depth measures
+hist(DM, main = "Histogram of Functional Depth Measures", xlab = "Depth",
+breaks = 30)
+```
+
+```{r}
+# Boxplot of depth measures
+boxplot(DM, main = "Boxplot of Functional Depth Measures", ylab = "Depth")
+```
+
+```{r}
+# Calculate the quartiles and IQR
+Q1 <- quantile(DM, 0.25) 
+Q3 <- quantile(DM, 0.75) 
+IQR <- Q3 - Q1
+
+outlier_threshold <- Q1 - 1.5 * IQR 
+outliers <- which(DM < outlier_threshold)
+
+print("Outliers:") 
+
+median_depth <- median(DM)
+central_samples <- which(DM >= median_depth)
+
+print("Central Samples:") 
+print(central_samples)
+```
+
+```{r}
+# Extract the depth measures (from MBD)
+DM <- b1$depth
+
+# Group the data into high-fat and low-fat groups
+threshold <- 20  # Fat content threshold
+index_high_fat <- which(tecator$y$Fat > threshold)
+index_low_fat <- which(tecator$y$Fat <= threshold)
+
+# Depth measures for high-fat and low-fat samples
+D_high_fat <- DM[index_high_fat]
+D_low_fat <- DM[index_low_fat]
+
+# Perform Wilcoxon rank-sum test
+wilcox_test_result <- wilcox.test(D_high_fat, D_low_fat)
+
+# Print the test results
+cat("Wilcoxon Rank-Sum Test Result:\n")
+print(wilcox_test_result)
+```
+
+
+## Functional linear model with basis representation
+
+
+```{r}
+library(fda.usc)
+data(tecator)
+
+absorp <- tecator$absorp.fdata
+fat20 <- ifelse(tecator$y$Fat < 20, 0, 1) * 2 + 2
+
+par(mfrow = c(1, 3))
+fat15 <- ifelse((y <- tecator$y$Fat) < 20, 2, 4)
+boxplot(y, main = "Fat")
+plot((X <- tecator$absorp), col = fat15, main = "Spectrometric: X")
+plot((X.d1 <- fdata.deriv(tecator$absorp, 1)), col = fat15, main = "Derviative: X.d1")
+```
+
+
+```{r}
+# first derivative of the absorbance spectra
+absorp.d1 <- fdata.deriv(absorp, nderiv = 1)
+
+# subset of the data
+ind <- 1:165
+tt <- absorp[["argvals"]]
+y <- tecator$y$Fat[ind]
+X <- absorp[ind, ]
+X.d1 <- fdata.deriv(X, nbasis = 30, nderiv = 1)
+X.d2 <- fdata.deriv(X, nbasis = 30, nderiv = 2)
+
+rangett <- absorp$rangeval
+basis1 <- create.bspline.basis(rangeval = rangett, nbasis = 30)
+
+# Fit functional regression model using the first derivative
+res.basis1 <- fregre.basis(X.d1, y, basis.x = basis1)
+
+# Summary of the fitted functional regression model
+print("Summary of Functional Regression Model:")
+summary_res <- summary(res.basis1)
+print(summary_res)
+
+print("Detailed Output of Functional Regression Model:")
+print(res.basis1)
+```
+
+
+```{r}
+plot(y, res.basis1$fitted.values, main = "Functional Regression: Fitted vs Actual", 
+     xlab = "Actual Fat Content", ylab = "Fitted Fat Content")
+abline(0, 1, col = "red", lwd = 2)  # Add a 45-degree line for reference
+
+plot(y, res.basis1$fitted.values, main = "Functional Regression with Linear Fit", 
+     xlab = "Actual Fat Content", ylab = "Fitted Fat Content")
+abline(lm(res.basis1$fitted.values ~ y), col = "blue", lwd = 2)  # Add linear regression line
+abline(0, 1, col = "red", lwd = 2)  # Add a 45-degree line for reference
+
+```
+
+
+
+
+
+
